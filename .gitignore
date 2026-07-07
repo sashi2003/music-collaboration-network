@@ -1,0 +1,13 @@
+# R / Quarto artifacts
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+*_files/
+*.html
+
+# OS
+.DS_Store
+
+# Data (uncomment if your data is private and shouldn't be pushed)
+# data/*.csv

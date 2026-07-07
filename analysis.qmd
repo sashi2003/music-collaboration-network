@@ -1,0 +1,245 @@
+---
+title: "Collaboration Networks in the Music Industry"
+subtitle: "A Nested ERGM Analysis"
+format: html
+editor: visual
+---
+
+## Overview
+
+This analysis examines the network of collaborations among the top 150 artists (by collaboration count) in the dataset. A series of nested Exponential Random Graph Models (ERGMs) is used to test four hypotheses:
+
+1.  **Country homophily** — artists from the same country are more likely to collaborate.
+2.  **Genre homophily** — artists sharing a similar musical genre are more likely to collaborate.
+3.  **Collaboration activity** — highly collaborative artists are more likely to form additional ties.
+4.  **Triadic closure** — artists who share collaborators are more likely to collaborate with each other.
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+
+library(statnet)
+library(dplyr)
+library(network)
+library(ergm)
+```
+
+## Data Loading & Preparation
+
+```{r}
+#| label: load-data
+
+collab  <- read.csv("data/collaborations.csv")
+artists <- read.csv("data/artists.csv")
+```
+
+We restrict the analysis to the top 150 artists by collaboration count, and subset the edge list to collaborations between artists in that group.
+
+```{r}
+#| label: subset-top-artists
+
+top_artists <- artists %>%
+  arrange(desc(collab_songs)) %>%
+  slice(1:150)
+
+collab_subset <- collab[
+  collab$artist1 %in% top_artists$artist &
+  collab$artist2 %in% top_artists$artist, ]
+```
+
+### Genre Grouping
+
+Raw genre strings are collapsed into six broad genre groups.
+
+```{r}
+#| label: genre-groups
+
+artists$genre_group <- "Other"
+
+artists$genre_group[grepl("hip hop|rap|trap", artists$genres, ignore.case = TRUE)] <- "Hip-Hop"
+artists$genre_group[grepl("latin|reggaeton", artists$genres, ignore.case = TRUE)] <- "Latin"
+artists$genre_group[grepl("pop", artists$genres, ignore.case = TRUE)] <- "Pop"
+artists$genre_group[grepl("electronic|dance|edm", artists$genres, ignore.case = TRUE)] <- "Electronic"
+artists$genre_group[grepl("country", artists$genres, ignore.case = TRUE)] <- "Country"
+
+table(artists$genre_group)
+```
+
+## Building the Network
+
+```{r}
+#| label: build-network
+
+net <- network(collab_subset[, c("artist1", "artist2")], directed = FALSE)
+
+# Country attribute
+country_map <- setNames(artists$country, artists$artist)
+net %v% "country" <- country_map[network.vertex.names(net)]
+
+# Genre group attribute
+genre_map <- setNames(artists$genre_group, artists$artist)
+net %v% "genre_group" <- genre_map[network.vertex.names(net)]
+
+# Collaboration count attribute
+collab_map <- setNames(artists$collab_songs, artists$artist)
+net %v% "collab_songs" <- collab_map[network.vertex.names(net)]
+```
+
+## Nested Model Building
+
+Models are built incrementally, adding one term at a time, and compared using AIC/BIC to confirm each addition improves fit.
+
+```{r}
+#| label: model1
+
+model1 <- ergm(net ~ edges)
+```
+
+```{r}
+#| label: model2
+
+model2 <- ergm(net ~ edges +
+                  nodematch("country"))
+```
+
+```{r}
+#| label: model3
+
+model3 <- ergm(net ~ edges +
+                  nodematch("country") +
+                  nodematch("genre_group"))
+```
+
+```{r}
+#| label: compare-1-3
+
+AIC(model1, model2, model3)
+BIC(model1, model2, model3)
+```
+
+```{r}
+#| label: model4
+
+model4 <- ergm(net ~ edges +
+                  nodematch("country") +
+                  nodematch("genre_group") +
+                  gwesp(0.25, fixed = TRUE))
+```
+
+```{r}
+#| label: compare-1-4
+
+AIC(model1, model2, model3, model4)
+BIC(model1, model2, model3, model4)
+```
+
+## Final Model
+
+The final specification adds `nodecov("collab_songs")` to capture each artist's overall collaboration activity, alongside country and genre homophily and triadic closure.
+
+```{r}
+#| label: final-model
+
+model5 <- ergm(net ~ edges +
+                  nodematch("country") +
+                  nodematch("genre_group") +
+                  nodecov("collab_songs") +
+                  gwesp(0.25, fixed = TRUE))
+
+summary(model5)
+```
+
+### Interpretation
+
+-   **Country homophily** — same-country artists collaborated significantly more frequently.
+-   **Genre homophily** — artists sharing a genre group were more likely to collaborate.
+-   **Collaboration count** — highly collaborative artists formed additional ties within the network.
+-   **GWESP (triadic closure)** — the network exhibited strong clustering; artists tended to collaborate within shared collaboration circles.
+
+## Model Diagnostics
+
+```{r}
+#| label: diagnostics
+#| fig-width: 8
+#| fig-height: 8
+
+mcmc.diagnostics(model5)
+```
+
+## Goodness-of-Fit
+
+```{r}
+#| label: gof
+#| fig-width: 8
+#| fig-height: 8
+
+gof_model5 <- gof(model5)
+plot(gof_model5)
+```
+
+GOF diagnostics confirm the final model reproduces key structural properties of the observed network, including degree distributions, shared partner structures, and geodesic distances.
+
+## Network Summary
+
+```{r}
+#| label: network-summary
+
+network.size(net)
+network.edgecount(net)
+network.density(net)
+
+deg <- degree(net)
+summary(deg)
+
+components <- sna::component.dist(net)
+components
+```
+
+## Visualizing the Network
+
+Nodes are colored by genre group, with labels shown for the most highly collaborative artists (degree \> 30).
+
+```{r}
+#| label: network-plot
+#| fig-width: 8
+#| fig-height: 8
+
+genre_colors <- c(
+  "Hip-Hop"    = "red",
+  "Pop"        = "blue",
+  "Latin"      = "green",
+  "Electronic" = "purple",
+  "Country"    = "orange",
+  "Other"      = "gray"
+)
+
+deg <- sna::degree(net)
+node_labels <- ifelse(deg > 30, network.vertex.names(net), "")
+
+plot(net,
+     mode        = "fruchtermanreingold",
+     vertex.col  = genre_colors[net %v% "genre_group"],
+     vertex.cex  = 1.5,
+     edge.col    = "#D3D3D3",
+     label       = node_labels,
+     label.cex   = 0.7)
+
+legend("topright",
+       legend = names(genre_colors),
+       col    = genre_colors,
+       pch    = 19,
+       pt.cex = 1.5,
+       bty    = "n")
+```
+
+## Conclusion
+
+The nested ERGM successfully captured both structural and attribute-based mechanisms underlying artist collaborations. Results suggest that collaboration patterns in the music industry are influenced by shared characteristics such as country and genre, as well as endogenous network processes including clustering and repeated partnership formation.
+
+## Future Work
+
+-   Incorporating temporal dynamics to examine how collaboration patterns evolve over time
+-   Expanding the network to include additional artist attributes such as record labels and streaming popularity
+-   Modeling weighted collaborations based on collaboration frequency or commercial success of tracks
