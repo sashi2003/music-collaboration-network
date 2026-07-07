@@ -21,10 +21,6 @@ This project asks:
 - **Undirected** artist collaboration network (edges = collaborations)
 - Artist attributes: country, genre group, collaboration count
 
-> Raw data files (`artists.csv`, `collaborations.csv`) are not included
-> in this repo. Add your own copies to the `data/` folder to reproduce
-> the analysis.
-
 ## Method
 
 A **nested Exponential Random Graph Model (ERGM)** was used to examine
